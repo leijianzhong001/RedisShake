@@ -65,16 +65,19 @@ func (ld *Loader) ParseRDB() int {
 			log.Panicf("close file failed. file_path=[%s], error=[%s]", ld.filPath, err)
 		}
 	}()
+	// bufio分段读取，不会将整个文件加载到内存中
 	rd := bufio.NewReader(ld.fp)
-	//magic + version
+	//magic + version 即REDIS + 0006
 	buf := make([]byte, 9)
 	_, err = io.ReadFull(rd, buf)
 	if err != nil {
 		log.PanicError(err)
 	}
+	// 校验REDIS魔数
 	if !bytes.Equal(buf[:5], []byte("REDIS")) {
 		log.Panicf("verify magic string, invalid file format. bytes=[%v]", buf[:5])
 	}
+	// 获取redis版本 0009
 	version, err := strconv.Atoi(string(buf[5:]))
 	if err != nil {
 		log.PanicError(err)
@@ -103,7 +106,7 @@ func (ld *Loader) parseRDBEntry(rd *bufio.Reader) {
 		statistics.UpdateRDBSentSize(uint64(offset))
 	}
 	defer UpdateRDBSentSize()
-	// read one entry
+	// read one entry 一秒给tick通道发送一个时间戳
 	tick := time.Tick(time.Second * 1)
 	for true {
 		typeByte := structure.ReadByte(rd)
@@ -113,6 +116,7 @@ func (ld *Loader) parseRDBEntry(rd *bufio.Reader) {
 		case kFlagFreq:
 			ld.freq = int64(structure.ReadByte(rd))
 		case kFlagAUX:
+			// redis元属性 0xfa
 			key := structure.ReadString(rd)
 			value := structure.ReadString(rd)
 			if key == "repl-stream-db" {

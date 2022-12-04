@@ -3,23 +3,22 @@ type = "sync"
 # source是表头，version这个字段被外部引用的话实际上是source.version
 [source]
 version = 6.2 # redis version, such as 2.8, 4.0, 5.0, 6.0, 6.2, 7.0, ...
-address = "10.243.66.12:6380"
+address = "10.243.66.12:30001"
 username = "" # keep empty if not using ACL
 password = "" # keep empty if no authentication is required
 tls = false
 elasticache_psync = "" # using when source is ElastiCache. ref: https://github.com/alibaba/RedisShake/issues/373
 
 [target]
-type = "standalone" # "standalone" or "cluster"
+type = "cluster" # "standalone" or "cluster"
 version = 6.2 # redis version, such as 2.8, 4.0, 5.0, 6.0, 6.2, 7.0, ...
 # When the target is a cluster, write the address of one of the nodes.
 # redis-shake will obtain other nodes through the `cluster nodes` command.
-address = "10.243.66.13:6380"
-username = "" # keep empty if not using ACL
-password = "" # keep empty if no authentication is required
+address = "10.243.66.13:30001"
+username = "default" # keep empty if not using ACL
+password = "c4b883c1cba107078b6e0eb6f5677b6a4fcf4046639f2d89a5ec43620efe6e12" # keep empty if no authentication is required
 tls = false
 
-# 生成的dump文件，日志文件，aop文件的存储目录
 [advanced]
 dir = "data"
 
