@@ -67,6 +67,7 @@ type RedisObject interface {
 func ParseObject(rd io.Reader, typeByte byte, key string) RedisObject {
 	switch typeByte {
 	case rdbTypeString: // string
+		// StringObject 指的是 value类型为string的键值对对象
 		o := new(StringObject)
 		o.LoadFromBuffer(rd, key, typeByte)
 		return o

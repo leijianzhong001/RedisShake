@@ -112,11 +112,14 @@ func (ld *Loader) parseRDBEntry(rd *bufio.Reader) {
 		typeByte := structure.ReadByte(rd)
 		switch typeByte {
 		case kFlagIdle:
+			// 0xF8 LRU redis key的LRU时间戳
 			ld.idle = int64(structure.ReadLength(rd))
 		case kFlagFreq:
+			// 0xF9 LFU LFU频率
 			ld.freq = int64(structure.ReadByte(rd))
 		case kFlagAUX:
 			// redis元属性 0xfa
+			// structure.ReadString的含义因该是按照rdb的字符串编码方式，读取一个字符串
 			key := structure.ReadString(rd)
 			value := structure.ReadString(rd)
 			if key == "repl-stream-db" {
@@ -127,6 +130,7 @@ func (ld *Loader) parseRDBEntry(rd *bufio.Reader) {
 				}
 				log.Infof("RDB repl-stream-db: %d", ld.replStreamDbId)
 			} else if key == "lua" {
+				// redis 7 ?
 				e := entry.NewEntry()
 				e.Argv = []string{"script", "load", value}
 				e.IsBase = true
@@ -136,29 +140,40 @@ func (ld *Loader) parseRDBEntry(rd *bufio.Reader) {
 				log.Infof("RDB AUX fields. key=[%s], value=[%s]", key, value)
 			}
 		case kFlagResizeDB:
+			// 0xFB RESIZEDB  描述 key 数目和设置了过期时间 key 数目
 			dbSize := structure.ReadLength(rd)
 			expireSize := structure.ReadLength(rd)
 			log.Infof("RDB resize db. db_size=[%d], expire_size=[%d]", dbSize, expireSize)
 		case kFlagExpireMs:
+			// 0xFC EXPIRETIMEMS key过期时间，使用毫秒表示。
 			ld.expireMs = int64(structure.ReadUint64(rd)) - time.Now().UnixMilli()
 			if ld.expireMs < 0 {
 				ld.expireMs = 1
 			}
 		case kFlagExpire:
+			// 0xFD EXPIRETIME  key-过期时间，使用秒表示。
 			ld.expireMs = int64(structure.ReadUint32(rd))*1000 - time.Now().UnixMilli()
 			if ld.expireMs < 0 {
 				ld.expireMs = 1
 			}
 		case kFlagSelect:
+			// 0xFE SELECTDB 选库标识，后面紧跟数据库编号
 			ld.nowDBId = int(structure.ReadLength(rd))
 		case kEOF:
+			// 0xFF EOF rdb文件结束符
 			return
 		default:
+			// value的类型标识 OBJECT_TYPE 已经在前面被读取到 typeByte 中了
+			// 读取一个key
 			key := structure.ReadString(rd)
 			var value bytes.Buffer
+			// io.TeeReader返回一个Reader，它将从reader(rd)中读取的内容写入writer(&value)。
+			// 通过它执行的所有从reader(rd)中读取的操作都与相应的对writer(&value)的写入操作相匹配。没有内部缓冲——写入操作必须在读取操作完成之前完成。 写入时遇到的任何错误都将报告为读错误。
 			anotherReader := io.TeeReader(rd, &value)
 			o := types.ParseObject(anotherReader, typeByte, key)
+			// 本次value的值大于 512mb
 			if uint64(value.Len()) > config.Config.Advanced.TargetRedisProtoMaxBulkLen {
+				// 如果值大于512mb，将命令改为对应的redis api, 如string就是set
 				cmds := o.Rewrite()
 				for _, cmd := range cmds {
 					e := entry.NewEntry()
@@ -178,8 +193,10 @@ func (ld *Loader) parseRDBEntry(rd *bufio.Reader) {
 				e := entry.NewEntry()
 				e.IsBase = true
 				e.DbId = ld.nowDBId
+				// 这里的意思应该是将的渠道的value值转为dump以后的序列化形式，然后通过restore命令加载到redis内存中
 				v := ld.createValueDump(typeByte, value.Bytes())
-				e.Argv = []string{"restore", key, strconv.FormatInt(ld.expireMs, 10), v}
+				// RESTORE key ttl serialized-value [REPLACE] [ABSTTL] [IDLETIME seconds] [FREQ frequency]
+				e.Argv = []string{"restore", key, strconv.FormatInt(ld.expireMs, 10), v} // 10代表10进制
 				if config.Config.Advanced.RDBRestoreCommandBehavior == "rewrite" {
 					if config.Config.Target.Version < 3.0 {
 						log.Panicf("RDB restore command behavior is rewrite, but target redis version is %f, not support REPLACE modifier", config.Config.Target.Version)
@@ -194,6 +211,7 @@ func (ld *Loader) parseRDBEntry(rd *bufio.Reader) {
 				}
 				ld.ch <- e
 			}
+			// 复位
 			ld.expireMs = 0
 			ld.idle = 0
 			ld.freq = 0
@@ -206,13 +224,24 @@ func (ld *Loader) parseRDBEntry(rd *bufio.Reader) {
 	}
 }
 
+// createValueDump创建value的dump字符串 以便restore到redis中
+// dump命令解释：dump命令以redis特定的格式序列化存储在key处的值，并将其返回给用户。返回值可以使用RESTORE命令合成回Redis key。
+// 序列化格式是不透明和非标准的，但是它有一些语义特征:它包含一个64位校验和，用于确保检测到错误。 RESTORE命令确保在使用序列化的值合成键之前检查校验和。
+// 值的编码格式与RDB使用的格式相同。RDB版本被编码在序列化的值中，因此不同的Redis版本与不兼容的RDB格式将拒绝处理序列化的值。
+// 序列化的值不包含过期信息。为了获取当前值的生存时间，应该使用ptl命令。如果key不存在，则返回nil大容量回复。
 func (ld *Loader) createValueDump(typeByte byte, val []byte) string {
 	ld.dumpBuffer.Reset()
+	// value类型
 	_, _ = ld.dumpBuffer.Write([]byte{typeByte})
+	// value
 	_, _ = ld.dumpBuffer.Write(val)
+	// binary.Write将数据的二进制形式写入writer
+	// uint16(6) ==> 00000000 00000110
+	// 这里如果写入的是rdb版本的话，是不是不应该写死6
 	_ = binary.Write(&ld.dumpBuffer, binary.LittleEndian, uint16(6))
 	// calc crc
 	sum64 := utils.CalcCRC64(ld.dumpBuffer.Bytes())
+	// 写入校验和
 	_ = binary.Write(&ld.dumpBuffer, binary.LittleEndian, sum64)
 	return ld.dumpBuffer.String()
 }
