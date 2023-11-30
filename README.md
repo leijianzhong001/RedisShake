@@ -1,3 +1,5 @@
+The current branch has been archived. Please proceed to the [current](https://github.com/suxb201/RedisShake) branch.
+
 # redis-shake
 
 [![CI](https://github.com/alibaba/RedisShake/actions/workflows/ci.yml/badge.svg?branch=v3)](https://github.com/alibaba/RedisShake/actions/workflows/ci.yml)
@@ -12,7 +14,7 @@ redis-shake is a tool for Redis data migration and data filtering.
 * ✅ Tested on Redis 5.0, Redis 6.0 and Redis 7.0
 * 🤗 Support custom filtering rules
 * 💪 Support large instance migration
-* 💖 Support `restore` mode and `sync` mode
+* 💖 Support `restore` mode, `sync` mode and `scan` mode
 * ☁️ Support Aliyun Redis and ElastiCache
 
 For older versions of redis-shake (support codis, twemproxy) please
